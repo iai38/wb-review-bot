@@ -1,4 +1,5 @@
 # main.py
+import os
 import logging
 import requests
 from aiogram import Bot, Dispatcher, types
