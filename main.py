@@ -29,13 +29,20 @@ def get_wb_reviews(nm_id: int, limit: int = 5):
         "User-Agent": "Mozilla/5.0"
     }
 
-    response = requests.get(api_url, headers=headers)
-    if response.status_code != 200:
+    try:
+        response = requests.get(api_url, headers=headers, timeout=5)  # добавили timeout
+        response.raise_for_status()  # выбросит ошибку, если код ответа не 200
+    except requests.RequestException as e:
+        print(f"Ошибка запроса к WB API: {e}")
         return []
 
-    data = response.json()
-    reviews = []
+    try:
+        data = response.json()
+    except Exception as e:
+        print(f"Ошибка парсинга JSON: {e}")
+        return []
 
+    reviews = []
     for item in data.get("feedbacks", []):
         reviews.append({
             "text": item.get("text"),
