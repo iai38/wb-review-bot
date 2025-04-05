@@ -94,4 +94,5 @@ async def handle_link(message: Message):
 
 # --- Запуск бота ---
 if __name__ == '__main__':
+    print("Start")
     executor.start_polling(dp, skip_updates=True)
