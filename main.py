@@ -1,4 +1,3 @@
-# main.py
 import os
 import logging
 import requests
@@ -7,12 +6,14 @@ from aiogram.types import Message
 from aiogram.utils import executor
 from dotenv import load_dotenv
 
+# Настройка логгирования
 logging.basicConfig(level=logging.INFO)
 
+# Загрузка .env
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# Инициализация бота
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
@@ -30,17 +31,15 @@ def get_wb_reviews(nm_id: int, limit: int = 5):
     }
 
     try:
-        response = requests.get(api_url, headers=headers, timeout=5)  # добавили timeout
-        response.raise_for_status()  # выбросит ошибку, если код ответа не 200
-    except requests.RequestException as e:
-        print(f"Ошибка запроса к WB API: {e}")
-        return []
-
-    try:
+        response = requests.get(api_url, headers=headers, timeout=5)
+        response.raise_for_status()
         data = response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка запроса: {e}")
+        return f"❗️Ошибка при обращении к WB API:\n<code>{str(e)}</code>"
     except Exception as e:
         print(f"Ошибка парсинга JSON: {e}")
-        return []
+        return f"❗️Ошибка при обработке ответа от Wildberries:\n<code>{str(e)}</code>"
 
     reviews = []
     for item in data.get("feedbacks", []):
@@ -78,6 +77,11 @@ async def handle_link(message: Message):
         return
 
     reviews = get_wb_reviews(nm_id)
+
+    if isinstance(reviews, str):
+        await message.reply(reviews, parse_mode="HTML")
+        return
+
     if not reviews:
         await message.reply("😔 Не удалось найти отзывы. Возможно, у товара их пока нет.")
         return
@@ -88,5 +92,6 @@ async def handle_link(message: Message):
 
     await message.reply(reply_text)
 
+# --- Запуск бота ---
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
