@@ -1,63 +1,80 @@
 # main.py
-
-import os
-import asyncio
+import logging
+import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
-from aiogram.filters import CommandStart
-import asyncpg
-from dotenv import load_dotenv
+from aiogram.utils import executor
+from config import BOT_TOKEN
 
-load_dotenv()
-
-# Config
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
-# --- DB Init ---
-async def init_db():
-    conn = await asyncpg.connect(DATABASE_URL)
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS requests (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            product_url TEXT,
-            created_at TIMESTAMP DEFAULT now()
-        );
-    ''')
-    await conn.close()
+# --- Парсинг отзывов Wildberries ---
+def extract_nm_id(url: str) -> int:
+    try:
+        return int(url.split("/catalog/")[1].split("/")[0])
+    except Exception:
+        return None
 
+def get_wb_reviews(nm_id: int, limit: int = 5):
+    api_url = f"https://feedbacks.wb.ru/feedbacks/v1/product?nmId={nm_id}&limit={limit}&skip=0"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
-# --- Handlers ---
-@dp.message(CommandStart())
-async def handle_start(message: Message):
-    await message.answer("Привет! Отправь мне ссылку на товар с Wildberries, и я проанализирую отзывы 🕵️")
+    response = requests.get(api_url, headers=headers)
+    if response.status_code != 200:
+        return []
 
-@dp.message()
+    data = response.json()
+    reviews = []
+
+    for item in data.get("feedbacks", []):
+        reviews.append({
+            "text": item.get("text"),
+            "rating": item.get("productValuation"),
+            "date": item.get("createdDate"),
+            "likes": item.get("likeCount", 0),
+            "dislikes": item.get("dislikeCount", 0)
+        })
+
+    return reviews
+
+# --- Обработчики Telegram ---
+@dp.message_handler(commands=['start', 'help'])
+async def send_welcome(message: types.Message):
+    await message.reply(
+        "👋 Привет! Я бот для анализа отзывов конкурентов.\n\n"
+        "Просто пришли мне ссылку на товар с Wildberries, и я покажу тебе отзывы покупателей."
+    )
+
+@dp.message_handler()
 async def handle_link(message: Message):
     url = message.text.strip()
-    if "wildberries.ru" not in url:
-        await message.answer("Пожалуйста, отправь корректную ссылку на товар с Wildberries.")
+
+    if "wildberries.ru/catalog/" not in url:
+        await message.reply("❗️Пришли, пожалуйста, корректную ссылку на товар с Wildberries.")
         return
 
-    # Сохраняем в БД
-    conn = await asyncpg.connect(DATABASE_URL)
-    await conn.execute(
-        "INSERT INTO requests (user_id, product_url) VALUES ($1, $2)",
-        message.from_user.id,
-        url
-    )
-    await conn.close()
+    await message.reply("🔍 Ищу отзывы...")
 
-    await message.answer("Спасибо! Я получил ссылку. Начинаю анализ... 🔍 (анализ пока в разработке)")
+    nm_id = extract_nm_id(url)
+    if not nm_id:
+        await message.reply("❗️Не удалось извлечь ID товара. Проверь ссылку.")
+        return
 
-# --- Main ---
-async def main():
-    await init_db()
-    await dp.start_polling(bot)
+    reviews = get_wb_reviews(nm_id)
+    if not reviews:
+        await message.reply("😔 Не удалось найти отзывы. Возможно, у товара их пока нет.")
+        return
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    reply_text = "📝 Вот последние отзывы:\n\n"
+    for r in reviews:
+        reply_text += f"⭐️ {r['rating']} | {r['date'][:10]}\n{r['text'][:200]}...\n\n"
+
+    await message.reply(reply_text)
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
